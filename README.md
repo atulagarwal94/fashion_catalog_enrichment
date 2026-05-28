@@ -331,7 +331,6 @@ Design choices: batch inference, horizontal workers, model versioning, per-attri
 - INT8 ONNX and pruning if size/latency still block
 - Active learning script integration with review queue
 
-Details: `notebooks/PLANNED_FEATURES.md`, `notebooks/EXPERIMENT_TIMELINE.md`.
 
 
 ## License
