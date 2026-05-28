@@ -26,29 +26,33 @@ def export_and_quantize(args):
     model.eval()
 
     wrapper = ONNXExportWrapper(model).to(device)
+    wrapper.eval()
     dummy_input = torch.randn(1, 3, image_size, image_size, device=device)
     onnx_path = Path(output_dir) / "model.onnx"
     quantized_path = Path(output_dir) / "model_quantized.onnx"
 
     output_names = [f"{task}_logits" for task in tasks]
-    dynamic_axes = {"image": {0: "batch_size"}}
-    for name in output_names:
-        dynamic_axes[name] = {0: "batch_size"}
+    dynamic_axes = None
+    if args.dynamic_batch:
+        dynamic_axes = {"image": {0: "batch_size"}}
+        for name in output_names:
+            dynamic_axes[name] = {0: "batch_size"}
 
     torch.onnx.export(
         wrapper,
         dummy_input,
         onnx_path,
         export_params=True,
-        opset_version=config["optimization"]["onnx_opset"],
+        opset_version=max(int(config["optimization"]["onnx_opset"]), 18),
         do_constant_folding=True,
         input_names=["image"],
         output_names=output_names,
         dynamic_axes=dynamic_axes,
+        dynamo=False,
     )
 
     quantization_status = "skipped"
-    if config["optimization"].get("quantize_dynamic", True):
+    if (not args.no_quantize) and config["optimization"].get("quantize_dynamic", True):
         quantize_dynamic(model_input=str(onnx_path), model_output=str(quantized_path), weight_type=QuantType.QInt8)
         quantization_status = "completed"
 
@@ -70,6 +74,16 @@ def main():
     parser.add_argument("--config", default="configs/config.yaml")
     parser.add_argument("--checkpoint", default="outputs/models/best_model.pt")
     parser.add_argument("--output_dir", default="outputs/models")
+    parser.add_argument(
+        "--dynamic-batch",
+        action="store_true",
+        help="Export ONNX with dynamic batch dimension (may reduce quantization compatibility).",
+    )
+    parser.add_argument(
+        "--no-quantize",
+        action="store_true",
+        help="Export ONNX but skip INT8 quantization (useful for dynamic-batch ONNX).",
+    )
     args = parser.parse_args()
     export_and_quantize(args)
 

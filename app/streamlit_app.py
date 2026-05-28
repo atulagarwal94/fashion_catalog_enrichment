@@ -15,6 +15,7 @@ if str(REPO_ROOT) not in sys.path:
 
 from src.active_learning import create_review_queue, should_flag_for_review
 from src.inference import FashionCatalogPredictor
+from src.onnx_inference import ONNXFashionCatalogPredictor
 from src.train_all import BACKBONES
 
 st.set_page_config(page_title="Fashion Catalog Enrichment", page_icon="🛍️", layout="wide")
@@ -22,6 +23,7 @@ st.set_page_config(page_title="Fashion Catalog Enrichment", page_icon="🛍️",
 MODEL_DIR = REPO_ROOT / "outputs" / "models"
 METRICS_DIR = REPO_ROOT / "outputs" / "metrics"
 SAMPLE_IMAGES_DIR = Path(__file__).resolve().parent / "sample_images"
+ONNX_ROOT_DIR = REPO_ROOT / "outputs" / "models" / "onnx"
 
 BACKBONE_DISPLAY = {
     "efficientnet_b0": "EfficientNet-B0",
@@ -93,6 +95,20 @@ def load_test_metrics(backbone: str) -> dict | None:
 def load_predictor(checkpoint_path: str) -> FashionCatalogPredictor:
     return FashionCatalogPredictor(str(REPO_ROOT / checkpoint_path))
 
+
+@st.cache_resource
+def load_onnx_predictor(checkpoint_path: str, onnx_path: str) -> ONNXFashionCatalogPredictor:
+    return ONNXFashionCatalogPredictor(
+        checkpoint_path=str(REPO_ROOT / checkpoint_path),
+        onnx_path=str(REPO_ROOT / onnx_path),
+    )
+
+
+def onnx_model_path_for(backbone: str, engine: str) -> str:
+    """Return ONNX model path relative to repo root for a backbone + engine."""
+    if engine == "ONNX Runtime (batched float32)":
+        return (ONNX_ROOT_DIR / backbone / "model.onnx").relative_to(REPO_ROOT).as_posix()
+    raise ValueError(f"Unknown engine: {engine}")
 
 def confidence_badge(score: float, threshold: float) -> str:
     """Return a coloured emoji badge based on confidence level."""
@@ -167,6 +183,24 @@ with st.sidebar:
     checkpoint_path = paths[labels.index(selected_label)]
     selected_backbone = backbones[labels.index(selected_label)]
     st.caption(f"`{checkpoint_path}`")
+
+    inference_engine = st.selectbox(
+        "Inference engine",
+        options=[
+            "PyTorch (checkpoint .pt)",
+            "ONNX Runtime (batched float32)",
+        ],
+        index=0,
+        help=(
+            "ONNX files are expected at:\n"
+            "- outputs/models/onnx/<backbone>/model.onnx (batched float32)\n"
+            "Create with: python -m src.optimize_onnx --checkpoint <pt> --output_dir <folder>"
+        ),
+    )
+    onnx_path = None
+    if inference_engine.startswith("ONNX Runtime"):
+        onnx_path = onnx_model_path_for(selected_backbone, inference_engine)
+        st.caption(f"ONNX: `{onnx_path}`")
 
     max_images = st.number_input("Max images", min_value=1, max_value=10, value=10)
     confidence_threshold = st.slider(
@@ -251,6 +285,19 @@ if st.session_state["last_checkpoint_path"] != checkpoint_path:
     st.session_state["results"] = None
     st.session_state["last_checkpoint_path"] = checkpoint_path
 
+if "last_inference_engine" not in st.session_state:
+    st.session_state["last_inference_engine"] = None
+if "last_onnx_path" not in st.session_state:
+    st.session_state["last_onnx_path"] = None
+
+if (
+    st.session_state["last_inference_engine"] != inference_engine
+    or st.session_state["last_onnx_path"] != (onnx_path or "")
+):
+    st.session_state["results"] = None
+    st.session_state["last_inference_engine"] = inference_engine
+    st.session_state["last_onnx_path"] = (onnx_path or "")
+
 run_clicked = st.button("Run prediction", type="primary")
 if run_clicked:
     if input_mode == "Upload my images":
@@ -266,8 +313,22 @@ if run_clicked:
         images = [Image.open(p).convert("RGB") for p in selected_sample_paths]
         names = [p.name for p in selected_sample_paths]
 
-    predictor = load_predictor(checkpoint_path)
-    batch_results = predictor.predict_batch_pil(images, names)
+    if inference_engine.startswith("ONNX Runtime"):
+        if onnx_path is None:
+            st.error("Internal error: ONNX path was not resolved.")
+            st.stop()
+        if not (REPO_ROOT / onnx_path).exists():
+            st.error(
+                f"ONNX model not found: `{onnx_path}`.\n\n"
+                "Create it with:\n"
+                f"`python -m src.optimize_onnx --checkpoint {checkpoint_path} --output_dir outputs/models/onnx/{selected_backbone} --dynamic-batch --no-quantize`"
+            )
+            st.stop()
+        predictor = load_onnx_predictor(checkpoint_path, onnx_path)
+        batch_results = predictor.predict_batch_pil(images, names)
+    else:
+        predictor = load_predictor(checkpoint_path)
+        batch_results = predictor.predict_batch_pil(images, names)
     st.session_state["results"] = {"images": images, "batch_results": batch_results}
 
 state = st.session_state.get("results")
