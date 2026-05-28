@@ -333,14 +333,6 @@ Design choices: batch inference, horizontal workers, model versioning, per-attri
 
 Details: `notebooks/PLANNED_FEATURES.md`, `notebooks/EXPERIMENT_TIMELINE.md`.
 
-## Further reading
-
-| Document | Contents |
-|----------|----------|
-| `REPORT_TEMPLATE.md` | Assignment-style report skeleton |
-| `notebooks/EXPERIMENT_TIMELINE.md` | Experiment log and metrics history |
-| `notebooks/DEPLOYMENT_PLAN.md` | EC2 setup, copy commands, Streamlit |
-| `notebooks/ML_BASICS_REVISION.md` | Tensors, CNNs, training concepts |
 
 ## License
 
