@@ -21,6 +21,7 @@ st.set_page_config(page_title="Fashion Catalog Enrichment", page_icon="🛍️",
 
 MODEL_DIR = REPO_ROOT / "outputs" / "models"
 METRICS_DIR = REPO_ROOT / "outputs" / "metrics"
+SAMPLE_IMAGES_DIR = Path(__file__).resolve().parent / "sample_images"
 
 BACKBONE_DISPLAY = {
     "efficientnet_b0": "EfficientNet-B0",
@@ -51,6 +52,32 @@ def discover_checkpoints() -> list[tuple[str, str]]:
     if default_pt.exists() and not options:
         options.append(("Default", default_pt.relative_to(REPO_ROOT).as_posix()))
     return options
+
+
+def discover_sample_images() -> list[Path]:
+    """Return built-in demo images shipped with the app."""
+    candidates: list[Path] = []
+
+    # Preferred location: app/sample_images/*
+    if SAMPLE_IMAGES_DIR.exists():
+        for ext in ("*.jpg", "*.jpeg", "*.png", "*.webp"):
+            candidates.extend(sorted(SAMPLE_IMAGES_DIR.glob(ext)))
+
+    # Fallback: any images directly under app/ (or nested one level)
+    app_dir = Path(__file__).resolve().parent
+    if not candidates:
+        for ext in ("*.jpg", "*.jpeg", "*.png", "*.webp"):
+            candidates.extend(sorted(app_dir.glob(ext)))
+            candidates.extend(sorted(app_dir.glob(f"*/*{ext.lstrip('*')}")))
+
+    # De-duplicate while preserving order
+    seen: set[Path] = set()
+    images: list[Path] = []
+    for p in candidates:
+        if p not in seen:
+            images.append(p)
+            seen.add(p)
+    return images
 
 
 @st.cache_data
@@ -124,7 +151,9 @@ paths = [path for _, path in checkpoint_options]
 backbones = [Path(path).stem.removeprefix("best_model_") for path in paths]
 
 default_index = 0
-if "efficientnet_b0" in backbones:
+if "resnet50" in backbones:
+    default_index = backbones.index("resnet50")
+elif "efficientnet_b0" in backbones:
     default_index = backbones.index("efficientnet_b0")
 
 with st.sidebar:
@@ -166,31 +195,91 @@ st.caption(
     f"Model: **{selected_label}** · Upload up to 10 product images → Class · Gender · Color · Usage · confidence · TAT"
 )
 
-uploaded_files = st.file_uploader(
-    "Upload product images",
-    type=["jpg", "jpeg", "png", "webp"],
-    accept_multiple_files=True,
+if "results" not in st.session_state:
+    st.session_state["results"] = None
+if "last_checkpoint_path" not in st.session_state:
+    st.session_state["last_checkpoint_path"] = None
+
+sample_images = discover_sample_images()
+input_mode = st.radio(
+    "Choose input source",
+    options=["Built-in sample images", "Upload my images"],
+    horizontal=True,
 )
 
-if not uploaded_files:
-    st.info("Upload images above to start prediction.")
+uploaded_files = []
+selected_sample_paths: list[Path] = []
+
+if input_mode == "Upload my images":
+    uploaded_files = st.file_uploader(
+        "Upload product images",
+        type=["jpg", "jpeg", "png", "webp"],
+        accept_multiple_files=True,
+    ) or []
+else:
+    if not sample_images:
+        st.warning(
+            f"No sample images found in `{SAMPLE_IMAGES_DIR}`. "
+            "Create that folder and add a few .jpg/.png/.webp files."
+        )
+    else:
+        options = [p.name for p in sample_images]
+        selected_names = st.multiselect(
+            "Select sample images",
+            options=options,
+            default=options[: min(3, len(options))],
+        )
+        selected_sample_paths = [p for p in sample_images if p.name in set(selected_names)]
+
+num_selected = len(uploaded_files) if input_mode == "Upload my images" else len(selected_sample_paths)
+if num_selected > max_images:
+    st.error(f"Please select up to {max_images} images only (got {num_selected}).")
     st.stop()
 
-if len(uploaded_files) > max_images:
-    st.error(f"Please upload up to {max_images} images only (got {len(uploaded_files)}).")
-    st.stop()
+if input_mode == "Upload my images" and uploaded_files:
+    st.caption(f"Selected: **{len(uploaded_files)}** upload(s)")
+elif input_mode == "Built-in sample images" and selected_sample_paths:
+    st.caption(f"Selected: **{len(selected_sample_paths)}** sample image(s)")
+else:
+    st.caption("Select images above, then click **Run prediction**.")
 
 if not (REPO_ROOT / checkpoint_path).exists():
     st.error(f"Checkpoint not found: `{checkpoint_path}`. Train a model first or pick another model in the sidebar.")
     st.stop()
 
-predictor = load_predictor(checkpoint_path)
+if st.session_state["last_checkpoint_path"] != checkpoint_path:
+    st.session_state["results"] = None
+    st.session_state["last_checkpoint_path"] = checkpoint_path
 
-# True batch inference: one forward pass for all uploads
-uploaded_images = [Image.open(file).convert("RGB") for file in uploaded_files]
-uploaded_names = [file.name for file in uploaded_files]
-batch_results = predictor.predict_batch_pil(uploaded_images, uploaded_names)
-results = list(zip(uploaded_images, batch_results))
+run_clicked = st.button("Run prediction", type="primary")
+if run_clicked:
+    if input_mode == "Upload my images":
+        if not uploaded_files:
+            st.error("Please upload at least one image before running prediction.")
+            st.stop()
+        images = [Image.open(file).convert("RGB") for file in uploaded_files]
+        names = [file.name for file in uploaded_files]
+    else:
+        if not selected_sample_paths:
+            st.error("Please select at least one sample image before running prediction.")
+            st.stop()
+        images = [Image.open(p).convert("RGB") for p in selected_sample_paths]
+        names = [p.name for p in selected_sample_paths]
+
+    predictor = load_predictor(checkpoint_path)
+    batch_results = predictor.predict_batch_pil(images, names)
+    st.session_state["results"] = {"images": images, "batch_results": batch_results}
+
+state = st.session_state.get("results")
+if not state:
+    st.info("Click **Run prediction** to generate predictions.")
+    st.stop()
+    # In bare/non-Streamlit execution contexts, st.stop() may not halt execution.
+    state = {"images": [], "batch_results": []}
+
+images = state["images"]
+batch_results = state["batch_results"]
+results = list(zip(images, batch_results))
 
 # ── summary banner ────────────────────────────────────────────────────────────
 

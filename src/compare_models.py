@@ -23,6 +23,7 @@ COMPARE_COLUMNS = [
     "gender_accuracy",
     "color_accuracy",
     "usage_accuracy",
+    "tat_ms_mean",
     "joint_accuracy",
     "class_macro_f1",
     "gender_macro_f1",
@@ -85,6 +86,7 @@ def compare_models(args) -> pd.DataFrame:
                 "gender_accuracy": metrics.get("gender_accuracy"),
                 "color_accuracy": metrics.get("color_accuracy"),
                 "usage_accuracy": metrics.get("usage_accuracy"),
+                "tat_ms_mean": (metrics.get("tat_ms_per_image") or {}).get("mean"),
                 "joint_accuracy": metrics.get("joint_accuracy"),
                 "class_macro_f1": metrics.get("class_macro_f1"),
                 "gender_macro_f1": metrics.get("gender_macro_f1"),
@@ -122,6 +124,8 @@ def compare_models(args) -> pd.DataFrame:
     ]:
         if col in display.columns:
             display[col] = display[col].map(_format_pct)
+    if "tat_ms_mean" in display.columns:
+        display["tat_ms_mean"] = display["tat_ms_mean"].map(lambda v: "—" if v is None else f"{v:.1f} ms")
     print(display[COMPARE_COLUMNS].to_string(index=False))
     print(f"\nSaved: {out_csv}")
     print(f"Saved: {out_json}")

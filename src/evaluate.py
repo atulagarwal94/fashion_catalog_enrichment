@@ -2,6 +2,8 @@ from __future__ import annotations
 
 import argparse
 from pathlib import Path
+import time
+import statistics
 
 import matplotlib.pyplot as plt
 import numpy as np
@@ -70,10 +72,14 @@ def evaluate(args):
     all_true = {task: [] for task in tasks}
     all_pred = {task: [] for task in tasks}
     prediction_rows = []
+    per_batch_forward_ms_per_image: list[float] = []
     with torch.no_grad():
         for batch in tqdm(dataloader, desc=f"Evaluating {args.split}"):
             images = batch["image"].to(device)
+            start = time.perf_counter()
             outputs = model(images)
+            forward_ms = (time.perf_counter() - start) * 1000
+            per_batch_forward_ms_per_image.append(forward_ms / max(int(images.size(0)), 1))
             batch_preds = {}
             batch_truth = {}
             for task in tasks:
@@ -99,6 +105,17 @@ def evaluate(args):
         "backbone": backbone,
         "tag": tag,
     }
+    if per_batch_forward_ms_per_image:
+        metrics["tat_ms_per_image"] = {
+            "mean": round(float(statistics.mean(per_batch_forward_ms_per_image)), 3),
+            "median": round(float(statistics.median(per_batch_forward_ms_per_image)), 3),
+            "p95": round(float(sorted(per_batch_forward_ms_per_image)[int(0.95 * (len(per_batch_forward_ms_per_image) - 1))]), 3),
+            "min": round(float(min(per_batch_forward_ms_per_image)), 3),
+            "max": round(float(max(per_batch_forward_ms_per_image)), 3),
+            "num_batches": int(len(per_batch_forward_ms_per_image)),
+            "batch_size": int(config["training"]["batch_size"]),
+            "notes": "Forward-pass time only (excludes DataLoader/CPU transforms). Computed per batch and normalized per image.",
+        }
     for task in tasks:
         labels = [label_info[task]["idx_to_label"][str(idx)] for idx in range(label_info[task]["num_classes"])]
         metrics[f"{task}_accuracy"] = accuracy_score(all_true[task], all_pred[task])
