@@ -1,0 +1,75 @@
+project:
+  name: fashion_catalog_enrichment
+  seed: 42
+
+paths:
+  raw_metadata_csv: data/raw/styles.csv
+  raw_image_dir: data/raw/images
+  processed_dir: data/processed
+  output_dir: outputs
+  model_dir: outputs/models
+  metrics_dir: outputs/metrics
+  review_queue_dir: outputs/review_queue
+
+data:
+  image_id_column: id
+  selected_article_types:
+    Shirt: ["Shirts"]
+    T-Shirt: ["Tshirts"]
+    Pants: ["Jeans", "Trousers"]
+    Shoes: ["Casual Shoes", "Sports Shoes", "Formal Shoes", "Flats", "Heels", "Sandals"]
+    Watch: ["Watches"]
+    Sunglasses: ["Sunglasses"]
+    Bag: ["Handbags", "Backpacks", "Laptop Bag", "Messenger Bag"]
+    Cap: ["Caps"]
+  gender_mapping:
+    Men: "Men"
+    Women: "Women"
+    Boys: "Kids"
+    Girls: "Kids"
+    Unisex: "Unisex"
+  usage_mapping:
+    Casual: "Casual"
+    Sports: "Sports"
+    Formal: "Formal"
+    Ethnic: "Ethnic"
+    "Smart Casual": "Casual"
+    Party: "Casual"
+    Travel: "Casual"
+    Home: "Other"
+  rare_usage_label: "Other"
+  color_keep_list: [Black, Blue, White, Red, Green, Grey, Brown, Pink, Yellow, Navy Blue, Purple, Beige, Silver, Gold]
+  rare_color_label: Other
+  min_samples_per_class: 100
+  max_samples_per_class: 5000
+  # max_samples_per_class: 2000
+  test_size: 0.15
+  val_size: 0.15
+  verify_images: true
+
+training:
+  image_size: 224
+  batch_size: 32
+  num_workers: 4
+  epochs: 5
+  learning_rate: 0.0003
+  weight_decay: 0.0001
+  dropout: 0.25
+  use_weighted_sampler: true
+  use_class_weighted_loss: true
+  loss_weights:
+    class: 1.0
+    gender: 0.7
+    color: 1.2
+    usage: 0.6
+  early_stopping_patience: 3
+
+inference:
+  checkpoint_path: outputs/models/best_model.pt
+  top_k: 1
+  confidence_threshold: 0.70
+  max_upload_images: 10
+
+optimization:
+  onnx_opset: 17
+  quantize_dynamic: true
